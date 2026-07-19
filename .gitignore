@@ -1,0 +1,31 @@
+# ── Databases (too large for GitHub — regenerate with stages 1–2)
+*.db
+*.db-wal
+*.db-shm
+*_backup_*.db
+
+# ...but do ship the small demo database
+!sample_forum_index.db
+
+# ── Scraped assets and generated output
+forum_assets/
+output/
+*_scrape_log.txt
+
+# ── Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# ── Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# ── Secrets
+.env
+*.pem

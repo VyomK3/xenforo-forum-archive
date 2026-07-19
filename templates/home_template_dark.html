@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ site_title }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #0D1414;
+    --card: #141C1C;
+    --border: #263231;
+    --ink: #E7EEEC;
+    --ink-muted: #8AA09D;
+    --accent: #2FD9CF;
+    --accent-soft: rgba(47, 217, 207, 0.12);
+    --accent-strong: #5FE8DF;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    line-height: 1.6;
+  }
+
+  a { color: var(--accent-strong); }
+
+  .site-header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 56px 24px 40px;
+  }
+
+  .site-header__inner {
+    max-width: 960px;
+    margin: 0 auto;
+  }
+
+  .eyebrow-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+
+  .eyebrow {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    margin: 0 0 12px;
+  }
+
+  .snapshot-tag {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    margin: 0;
+  }
+
+  h1 {
+    font-size: 40px;
+    font-weight: 700;
+    margin: 0 0 14px;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+  }
+
+  .subtitle {
+    font-size: 15px;
+    color: var(--ink-muted);
+    max-width: 620px;
+    margin: 0;
+  }
+
+  /* --- prominent thread-search box in the header --- */
+  .thread-search-form {
+    margin-top: 26px;
+    max-width: 620px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .thread-search-form__row {
+    display: flex;
+    gap: 10px;
+  }
+
+  .thread-search-input {
+    flex: 1;
+    background: var(--paper);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 13px 15px;
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 15px;
+  }
+
+  .thread-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .thread-search-submit {
+    background: var(--accent);
+    color: #06201E;
+    border: none;
+    border-radius: 8px;
+    padding: 0 22px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .thread-search-submit:hover { background: var(--accent-strong); }
+
+  .thread-search-form__options {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+
+  .thread-search-form__option {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+    cursor: pointer;
+  }
+
+  .thread-search-form__option input[type="radio"] {
+    accent-color: var(--accent);
+  }
+
+  .thread-search-form__full-link {
+    margin: 4px 0 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .thread-search-form__full-link a {
+    color: var(--accent-strong);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .thread-search-form__full-link a:hover { text-decoration: underline; }
+
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+
+  .stats-bar {
+    display: flex;
+    gap: 28px;
+    flex-wrap: wrap;
+    margin: 18px 0 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+
+  .stats-bar strong {
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+
+  /* --- top-level Section divider (pure segregation label, not a card) --- */
+  .mega-section { margin-bottom: 38px; }
+
+  .mega-section__label {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 14px;
+  }
+
+  .mega-section__icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    stroke: var(--accent-strong);
+    fill: none;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .mega-section__label span {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    white-space: nowrap;
+  }
+
+  .mega-section__label::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* --- Sub-Section link rows --- */
+  .section-list {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--card);
+  }
+
+  .section-row {
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-row:last-child { border-bottom: none; }
+
+  .section-row__main {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    gap: 18px;
+    align-items: center;
+    padding: 15px 18px;
+    text-decoration: none;
+    color: var(--ink);
+    transition: background 0.12s ease;
+  }
+
+  .section-row__main:hover { background: var(--accent-soft); }
+
+  .section-row__name {
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .section-row__desc {
+    display: block;
+    font-weight: 400;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin-top: 2px;
+  }
+
+  .section-row__count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+
+  .section-row__count strong {
+    color: var(--accent-strong);
+    font-weight: 600;
+  }
+
+  .section-row__arrow {
+    font-family: 'IBM Plex Mono', monospace;
+    color: var(--ink-muted);
+  }
+
+  /* --- Sub-Sub-Section quick links (item E) --- */
+  .section-row__children {
+    padding: 0 18px 13px 18px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--ink-muted);
+    line-height: 1.7;
+  }
+
+  .section-row__children a {
+    color: var(--ink-muted);
+    text-decoration: none;
+  }
+
+  .section-row__children a:hover {
+    color: var(--accent-strong);
+    text-decoration: underline;
+  }
+
+  footer {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 24px 40px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  footer .footer-disclaimer {
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 12.5px;
+    line-height: 1.6;
+    margin: 0 0 6px;
+  }
+
+  footer .footer-credit {
+    margin: 0 0 16px;
+  }
+
+  @media (max-width: 560px) {
+    h1 { font-size: 30px; }
+    .section-row__main { grid-template-columns: 1fr auto; }
+    .section-row__arrow { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Inline icon sprite for the home page section headers (item H) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<defs>
+  <symbol id="icon-news" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="15" rx="1.5"/><path d="M7 9h10M7 12.5h10M7 16h6"/><path d="M17 5V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1"/></symbol>
+  <symbol id="icon-mobile" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2"/><path d="M10.5 18.5h3"/></symbol>
+  <symbol id="icon-cpu" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/><rect x="9.5" y="9.5" width="5" height="5"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></symbol>
+  <symbol id="icon-camera" viewBox="0 0 24 24"><path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="icon-gamepad" viewBox="0 0 24 24"><rect x="2.5" y="8" width="19" height="9" rx="4"/><path d="M7 10.5v4M5 12.5h4"/><circle cx="15.5" cy="11.5" r="1"/><circle cx="18" cy="14" r="1"/></symbol>
+  <symbol id="icon-code" viewBox="0 0 24 24"><path d="M8.5 7 3.5 12l5 5M15.5 7l5 5-5 5M13.5 5l-3 14"/></symbol>
+  <symbol id="icon-megaphone" viewBox="0 0 24 24"><path d="M3 10v4a1 1 0 0 0 1 1h2l1.2 4.5a1 1 0 0 0 1 .75h1.1l-.9-5.25M3 10l14-5.5v15L3 14"/><path d="M17 8.5a4 4 0 0 1 0 7"/></symbol>
+  <symbol id="icon-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+  <symbol id="icon-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><circle cx="17" cy="9" r="2.4"/><path d="M15.5 14.2c2.3.4 4 2.2 4.5 5.3"/></symbol>
+  <symbol id="icon-cart" viewBox="0 0 24 24"><circle cx="9" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/><path d="M2.5 3h2.5l2.6 12.4a1.5 1.5 0 0 0 1.5 1.2h8.2a1.5 1.5 0 0 0 1.5-1.2L21 7.5H6"/></symbol>
+  <symbol id="icon-cap" viewBox="0 0 24 24"><path d="M12 4 2 9l10 5 10-5-10-5z"/><path d="M6 11.5V17c0 1.4 2.7 3 6 3s6-1.6 6-3v-5.5"/><path d="M22 9v6.5"/></symbol>
+  <symbol id="icon-coffee" viewBox="0 0 24 24"><path d="M4 8h13v6a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V8z"/><path d="M17 9.5h1.5a2.5 2.5 0 0 1 0 5H17"/><path d="M8 3.5c-.6.7-.6 1.3 0 2M12 3.5c-.6.7-.6 1.3 0 2"/></symbol>
+  <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H10l2 2.5h7.5A1.5 1.5 0 0 1 21 9v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18z"/></symbol>
+</defs>
+</svg>
+
+<header class="site-header">
+  <div class="site-header__inner">
+    <div class="eyebrow-row">
+      <p class="eyebrow">Read-only archive</p>
+      <p class="snapshot-tag">{% if snapshot_date %}snapshot: {{ snapshot_date }}{% endif %}</p>
+    </div>
+    <h1>{{ site_title }}</h1>
+    <p class="subtitle">{{ site_subtitle }}</p>
+
+    <div class="stats-bar">
+      <span><strong>{{ mega_sections|length }}</strong> section{{ 's' if mega_sections|length != 1 else '' }}</span>
+      <span><strong>{{ total_subsections }}</strong> sub-section{{ 's' if total_subsections != 1 else '' }}</span>
+      <span><strong>{{ total_threads }}</strong> thread{{ 's' if total_threads != 1 else '' }} archived</span>
+      <span><strong>{{ total_posts }}</strong> post{{ 's' if total_posts != 1 else '' }} archived</span>
+    </div>
+
+    <form class="thread-search-form" action="search.html" method="get">
+      <div class="thread-search-form__row">
+        <input type="text" class="thread-search-input" id="heroSearchInput" name="q" placeholder="Search thread titles or a poster's username&hellip;" autocomplete="off">
+        <button type="submit" class="thread-search-submit">Search</button>
+      </div>
+      <div class="thread-search-form__options" id="heroModeOptions">
+        <label class="thread-search-form__option">
+          <input type="radio" name="mode" value="title" checked data-hero-mode>
+          Search in thread titles only
+        </label>
+        <label class="thread-search-form__option">
+          <input type="radio" name="mode" value="started" data-hero-mode>
+          Started by poster
+        </label>
+        <label class="thread-search-form__option">
+          <input type="radio" name="mode" value="contributed" data-hero-mode>
+          Poster contributed
+        </label>
+      </div>
+      <p class="thread-search-form__full-link"><a href="full_search.html">Full Thread Search</a></p>
+    </form>
+  </div>
+</header>
+
+<main>
+  {% for mega in mega_sections %}
+  <div class="mega-section" id="{{ mega.anchor }}">
+    <div class="mega-section__label">
+      <svg class="mega-section__icon"><use href="#icon-{{ mega.icon }}"></use></svg>
+      <span>{{ mega.name }}</span>
+    </div>
+    <div class="section-list">
+      {% for sub in mega.subsections %}
+      <div class="section-row">
+        <a class="section-row__main" href="{{ sub.href }}">
+          <span class="section-row__name">
+            {{ sub.name }}
+            {% if sub.description %}<span class="section-row__desc">{{ sub.description }}</span>{% endif %}
+          </span>
+          <span class="section-row__count"><strong>{{ sub.total_count }}</strong> thread{{ 's' if sub.total_count != 1 else '' }}</span>
+          <span class="section-row__arrow">&rarr;</span>
+        </a>
+        {% if sub.children %}
+        <div class="section-row__children">
+          {% for child in sub.children %}<a href="{{ child.href }}">{{ child.name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</main>
+
+<footer>
+  <p class="footer-disclaimer">{{ footer_note }}</p>
+  <p class="footer-disclaimer footer-credit">{{ developer_note }}</p>
+  Rendered from local archive &middot; {{ mega_sections|length }} sections &middot; {{ total_subsections }} sub-sections &middot; {{ total_threads }} threads &middot; {{ total_posts }} posts
+  {% if snapshot_date %}<br>Forum snapshot as of: {{ snapshot_date }}{% endif %}
+</footer>
+
+<script>
+  // Update the search box placeholder to match whichever mode radio is
+  // selected ("title" is the default).
+  (function () {
+    var boxes = Array.prototype.slice.call(document.querySelectorAll('#heroModeOptions input[data-hero-mode]'));
+    var input = document.getElementById('heroSearchInput');
+    var placeholders = { title: "Search thread titles\u2026", started: "Enter a poster's username\u2026", contributed: "Enter a poster's username\u2026" };
+
+    function updatePlaceholder() {
+      var active = boxes.find(function (b) { return b.checked; });
+      if (active && input) input.placeholder = placeholders[active.value] || placeholders.title;
+    }
+
+    boxes.forEach(function (box) {
+      box.addEventListener('change', updatePlaceholder);
+    });
+
+    updatePlaceholder();
+  })();
+</script>
+
+</body>
+</html>

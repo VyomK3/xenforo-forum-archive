@@ -1,0 +1,21 @@
+# /etc/systemd/system/archiver.service
+[Unit]
+Description=xenforo-archiver forum archive (gunicorn)
+After=network.target
+
+[Service]
+User=username
+Group=groupname
+WorkingDirectory=/home/username/www/archiver
+# --preload makes workers share Python library imports copy-on-write.
+ExecStart=/home/username/www/archiver/venv/bin/gunicorn -w 2 --preload \
+    --bind 127.0.0.1:8000 --timeout 60 app:app
+Restart=always
+RestartSec=3
+# NOTE: no ProtectHome here — the app now lives under /home, and
+# ProtectHome=true would hide the entire directory from the service.
+ProtectSystem=full
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

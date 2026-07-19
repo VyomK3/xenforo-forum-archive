@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ title }} &middot; {{ site_title }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #0D1414;
+    --card: #141C1C;
+    --border: #263231;
+    --ink: #E7EEEC;
+    --ink-muted: #8AA09D;
+    --accent: #2FD9CF;
+    --accent-soft: rgba(47, 217, 207, 0.12);
+    --accent-strong: #5FE8DF;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    line-height: 1.6;
+  }
+
+  a { color: var(--accent-strong); }
+
+{% include "_shell_css.html" %}
+
+  .page-head {
+    margin-bottom: 26px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .breadcrumb {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--ink-muted);
+    margin: 0 0 10px;
+  }
+
+  .breadcrumb a { color: var(--ink-muted); text-decoration: none; }
+  .breadcrumb a:hover { color: var(--accent-strong); }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 8px;
+    line-height: 1.3;
+  }
+
+  .section-desc {
+    font-size: 14px;
+    color: var(--ink-muted);
+    margin: 0 0 6px;
+    max-width: 720px;
+  }
+
+  .section-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* --- children (sub-sub-section) quick links --- */
+  .children-nav {
+    margin-bottom: 32px;
+  }
+
+  .children-nav__title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    margin: 0 0 10px;
+  }
+
+  .children-list {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--card);
+  }
+
+  .children-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 13px 18px;
+    border-bottom: 1px solid var(--border);
+    text-decoration: none;
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 600;
+    transition: background 0.12s ease;
+  }
+
+  .children-row:last-child { border-bottom: none; }
+  .children-row:hover { background: var(--accent-soft); }
+
+  .children-row__count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+
+  .threads-heading {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-strong);
+    margin: 0 0 10px;
+  }
+
+  /* --- thread list --- */
+  .thread-list {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    background: var(--card);
+  }
+
+  .thread-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 18px;
+    align-items: center;
+    padding: 15px 18px;
+    border-bottom: 1px solid var(--border);
+    text-decoration: none;
+    color: var(--ink);
+    transition: background 0.12s ease;
+  }
+
+  .thread-row:last-child { border-bottom: none; }
+  .thread-row:hover { background: var(--accent-soft); }
+
+  .thread-row__title { font-weight: 600; font-size: 14.5px; }
+
+  .sticky-badge, .closed-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-right: 8px;
+    display: inline-block;
+  }
+
+  .sticky-badge { background: var(--accent-soft); color: var(--accent-strong); }
+  .closed-badge { background: rgba(230, 120, 100, 0.12); color: #E68C78; }
+
+  .thread-row__started {
+    display: block;
+    font-weight: 400;
+    font-size: 12px;
+    color: var(--ink-muted);
+    margin-top: 3px;
+  }
+
+  .thread-row__stat {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .thread-row__stat strong { color: var(--ink); font-weight: 600; }
+
+  .thread-row__last {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .empty-state {
+    padding: 40px 18px;
+    text-align: center;
+    color: var(--ink-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  /* --- pagination --- */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 24px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+
+  .pagination a, .pagination span {
+    min-width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    text-decoration: none;
+    color: var(--ink-muted);
+    padding: 0 8px;
+  }
+
+  .pagination a:hover { background: var(--accent-soft); color: var(--accent-strong); }
+
+  .pagination .current {
+    background: var(--accent);
+    color: #06201E;
+    font-weight: 600;
+  }
+
+  .pagination .disabled {
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .pagination .ellipsis { color: var(--ink-muted); }
+
+  .page-indicator {
+    text-align: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+    margin-top: 10px;
+  }
+
+  .page-jump {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+
+  .page-jump__input {
+    width: 64px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 8px;
+    color: var(--ink);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    text-align: center;
+  }
+
+  .page-jump__input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .page-jump__btn {
+    background: var(--accent);
+    color: #06201E;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .page-jump__btn:hover { background: var(--accent-strong); }
+
+  @media (max-width: 560px) {
+    .thread-row { grid-template-columns: 1fr auto; }
+    .thread-row__last { display: none; }
+  }
+</style>
+</head>
+<body>
+
+{% include "_topbar.html" %}
+
+<div class="shell">
+<main>
+  <div class="page-head">
+    <p class="breadcrumb">
+      <a href="{{ home_href }}">{{ site_title }}</a> / {{ mega_name }} /
+      {% if parent %}<a href="{{ parent.href }}">{{ parent.name }}</a> / {{ name }}{% else %}{{ name }}{% endif %}
+    </p>
+    <h1>{{ title }}</h1>
+    {% if description %}<p class="section-desc">{{ description }}</p>{% endif %}
+    <p class="section-meta">
+      {{ total_count }} thread{{ 's' if total_count != 1 else '' }}
+      {% if source_url %} &middot; originally from <a href="{{ source_url }}" target="_blank" rel="noopener">{{ source_url }}</a>{% endif %}
+    </p>
+  </div>
+
+  {% if children %}
+  <div class="children-nav">
+    <p class="children-nav__title">Sub-sections</p>
+    <div class="children-list">
+      {% for child in children %}
+      <a class="children-row" href="{{ child.href }}">
+        <span>{{ child.name }}</span>
+        <span class="children-row__count">{{ child.thread_count }} thread{{ 's' if child.thread_count != 1 else '' }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% if show_own %}
+  {% if children %}<p class="threads-heading">Threads in {{ name }}</p>{% endif %}
+
+  {% if threads %}
+  <div class="thread-list">
+    {% for thread in threads %}
+    <a class="thread-row" href="{{ thread.href }}">
+      <span class="thread-row__title">
+        {% if thread.is_sticky %}<span class="sticky-badge">Pinned</span>{% endif %}
+        {% if thread.is_closed %}<span class="closed-badge">Closed</span>{% endif %}
+        {{ thread.title }}
+        <span class="thread-row__started">Started by {{ thread.started_by }} &middot; {{ thread.post_date_text }}</span>
+      </span>
+      <span class="thread-row__stat"><strong>{{ thread.replies }}</strong> replies</span>
+      <span class="thread-row__stat"><strong>{{ thread.views }}</strong> views</span>
+      <span class="thread-row__last">{{ thread.last_post_date_text }}</span>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% if total_pages > 1 %}
+  <div class="pagination">
+    <a class="{{ 'disabled' if current_page == 1 else '' }}" href="{{ prev_href }}">&larr; Prev</a>
+    {% for p in page_items %}
+      {% if p is none %}
+      <span class="ellipsis">&hellip;</span>
+      {% else %}
+      <a class="{{ 'current' if p.num == current_page else '' }}" href="{{ p.href }}">{{ p.num }}</a>
+      {% endif %}
+    {% endfor %}
+    <a class="{{ 'disabled' if current_page == total_pages else '' }}" href="{{ next_href }}">Next &rarr;</a>
+  </div>
+  <p class="page-indicator">Page {{ current_page }} of {{ total_pages }}</p>
+  <form class="page-jump" onsubmit="return diarcGoToPage(event)">
+    <label for="pageJumpInput">Go to page</label>
+    <input type="number" min="1" max="{{ total_pages }}" class="page-jump__input" id="pageJumpInput" placeholder="{{ current_page }}">
+    <button type="submit" class="page-jump__btn">Go</button>
+  </form>
+  <script>
+    function diarcGoToPage(e) {
+      e.preventDefault();
+      var totalPages = {{ total_pages }};
+      var slug = "{{ slug }}";
+      var input = document.getElementById('pageJumpInput');
+      var n = parseInt(input.value, 10);
+      if (!n || n < 1) n = 1;
+      if (n > totalPages) n = totalPages;
+      window.location.href = (n === 1) ? (slug + '.html') : (slug + '-page-' + n + '.html');
+      return false;
+    }
+  </script>
+  {% endif %}
+
+  {% else %}
+  <div class="empty-state">No archived threads in this section yet.</div>
+  {% endif %}
+  {% endif %}
+</main>
+
+{% include "_sidebar.html" %}
+</div>
+
+<footer class="shell-footer">
+  Rendered from local archive &middot; {{ total_count }} thread{{ 's' if total_count != 1 else '' }} in {{ name }}
+</footer>
+
+</body>
+</html>

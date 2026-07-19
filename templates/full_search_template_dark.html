@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Full Thread Search &middot; {{ site_title }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #0D1414;
+    --card: #141C1C;
+    --border: #263231;
+    --ink: #E7EEEC;
+    --ink-muted: #8AA09D;
+    --accent: #2FD9CF;
+    --accent-soft: rgba(47, 217, 207, 0.12);
+    --accent-strong: #5FE8DF;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    line-height: 1.6;
+  }
+
+  a { color: var(--accent-strong); }
+
+{% include "_shell_css.html" %}
+
+  .site-header {
+    margin-bottom: 26px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .breadcrumb {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--ink-muted);
+    margin: 0 0 10px;
+  }
+
+  .breadcrumb a { color: var(--ink-muted); text-decoration: none; }
+  .breadcrumb a:hover { color: var(--accent-strong); }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    line-height: 1.3;
+  }
+
+  .page-subtitle {
+    font-size: 13px;
+    color: var(--ink-muted);
+    margin: 0 0 16px;
+  }
+
+  /* --- search form --- */
+  .search-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .search-form__row {
+    display: flex;
+    gap: 10px;
+  }
+
+  .search-input {
+    flex: 1;
+    background: var(--paper);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 14px;
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 15px;
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .search-submit {
+    background: var(--accent);
+    color: #06201E;
+    border: none;
+    border-radius: 8px;
+    padding: 0 22px;
+    font-family: 'IBM Plex Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .search-submit:hover { background: var(--accent-strong); }
+
+  .search-form__back-link {
+    margin: 4px 0 0;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .search-form__back-link a {
+    color: var(--accent-strong);
+    text-decoration: none;
+    font-weight: 600;
+  }
+
+  .search-form__back-link a:hover { text-decoration: underline; }
+
+
+
+  .status-line {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin: 0 0 18px;
+  }
+
+  .status-line strong { color: var(--accent-strong); font-weight: 600; }
+
+  /* --- results --- */
+  .result-card {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--card);
+    padding: 16px 18px;
+    margin-bottom: 14px;
+  }
+
+  .result-card__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-bottom: 6px;
+  }
+
+  .result-card__title {
+    font-weight: 600;
+    font-size: 15px;
+    text-decoration: none;
+    color: var(--ink);
+  }
+
+  .result-card__title:hover { color: var(--accent-strong); }
+
+  .sticky-badge, .closed-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-right: 8px;
+    display: inline-block;
+  }
+
+  .sticky-badge { background: var(--accent-soft); color: var(--accent-strong); }
+  .closed-badge { background: rgba(230, 120, 100, 0.12); color: #E68C78; }
+
+  .result-card__stats {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+
+  .result-card__stats strong { color: var(--ink); font-weight: 600; }
+
+  .result-card__meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    margin: 0 0 10px;
+  }
+
+  .result-card__meta a { color: var(--ink-muted); }
+  .result-card__meta a:hover { color: var(--accent-strong); }
+
+  .result-card__snippet {
+    font-size: 13.5px;
+    color: var(--ink-muted);
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .result-card__snippet mark {
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    border-radius: 3px;
+    padding: 0 2px;
+  }
+
+  .empty-state {
+    padding: 40px 18px;
+    text-align: center;
+    color: var(--ink-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+
+  .loading-state {
+    padding: 40px 18px;
+    text-align: center;
+    color: var(--ink-muted);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+
+  /* --- pagination --- */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 24px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+
+  .pagination a, .pagination span {
+    min-width: 34px;
+    height: 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    text-decoration: none;
+    color: var(--ink-muted);
+    padding: 0 8px;
+    cursor: pointer;
+  }
+
+  .pagination a:hover { background: var(--accent-soft); color: var(--accent-strong); }
+
+  .pagination .current {
+    background: var(--accent);
+    color: #06201E;
+    font-weight: 600;
+  }
+
+  .pagination .disabled {
+    opacity: 0.35;
+    pointer-events: none;
+  }
+
+  .pagination .ellipsis { color: var(--ink-muted); cursor: default; }
+
+  .page-indicator {
+    text-align: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+    margin-top: 10px;
+  }
+
+  .page-jump {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+  }
+
+  .page-jump__input {
+    width: 64px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 8px;
+    color: var(--ink);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    text-align: center;
+  }
+
+  .page-jump__input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .page-jump__btn {
+    background: var(--accent);
+    color: #06201E;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 14px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .page-jump__btn:hover { background: var(--accent-strong); }
+
+</style>
+</head>
+<body>
+
+{% include "_topbar.html" %}
+
+<div class="shell">
+<div>
+<header class="site-header">
+  <div class="site-header__inner">
+    <p class="breadcrumb"><a href="index.html">{{ site_title }}</a> / <a href="search.html">Search</a> / Full Thread Search</p>
+    <h1>Full Thread Search</h1>
+    <p class="page-subtitle">Searches the complete text of every post in the archive, not just titles &mdash; this can be slower to load than the regular search.</p>
+    <form class="search-form" id="searchForm">
+      <div class="search-form__row">
+        <input type="text" class="search-input" id="searchInput" name="q" placeholder="Search titles and post content&hellip;" autocomplete="off">
+        <button type="submit" class="search-submit">Search</button>
+      </div>
+      <p class="search-form__back-link"><a href="search.html">&larr; Back to regular search</a></p>
+    </form>
+  </div>
+</header>
+
+
+<main>
+  <p class="status-line" id="statusLine">Loading full search index&hellip;</p>
+  <div id="resultsContainer"></div>
+  <div class="pagination" id="paginationContainer" style="display:none;"></div>
+  <p class="page-indicator" id="pageIndicator" style="display:none;"></p>
+  <form class="page-jump" id="pageJumpForm" style="display:none;">
+    <label for="pageJumpInput">Go to page</label>
+    <input type="number" min="1" class="page-jump__input" id="pageJumpInput" placeholder="1">
+    <button type="submit" class="page-jump__btn">Go</button>
+  </form>
+</main>
+</div>
+
+{% include "_sidebar.html" %}
+</div>
+
+<footer class="shell-footer">
+  xenforo-archiver search runs entirely in your browser &mdash; no data leaves this page.
+</footer>
+
+<script src="search_index_full.js"></script>
+<script>
+(function () {
+  var PAGE_SIZE = 20;
+  var state = { page: 1, results: [] };
+
+  function normalize(s) { return (s || '').toString().toLowerCase(); }
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function getQueryParams() {
+    var params = new URLSearchParams(window.location.search);
+    return { q: params.get('q') || '' };
+  }
+
+  function setQueryParams(q, push) {
+    var params = new URLSearchParams();
+    if (q) params.set('q', q);
+    var url = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    if (push) {
+      window.history.pushState({}, '', url);
+    } else {
+      window.history.replaceState({}, '', url);
+    }
+  }
+
+  // Full keyword-in-content match — title OR post text, against the
+  // uncapped (or capped-but-larger) search_index_full.js.
+  function matchRecord(record, terms) {
+    var titleN = normalize(record.t);
+    var contentN = normalize(record.c);
+    return terms.every(function (term) {
+      return titleN.indexOf(term) !== -1 || contentN.indexOf(term) !== -1;
+    });
+  }
+
+  function buildSnippet(record, terms) {
+    var content = record.c || '';
+    var contentLower = content.toLowerCase();
+    var bestIdx = -1;
+    terms.forEach(function (term) {
+      var idx = contentLower.indexOf(term);
+      if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) bestIdx = idx;
+    });
+
+    var snippetText, prefix = '', suffixStr = '';
+    if (bestIdx === -1) {
+      snippetText = content.slice(0, 160);
+      suffixStr = content.length > 160 ? '…' : '';
+    } else {
+      var start = Math.max(0, bestIdx - 80);
+      var end = Math.min(content.length, bestIdx + 80);
+      snippetText = content.slice(start, end);
+      prefix = start > 0 ? '…' : '';
+      suffixStr = end < content.length ? '…' : '';
+    }
+
+    var escaped = escapeHtml(snippetText);
+    terms.forEach(function (term) {
+      if (!term) return;
+      var re = new RegExp('(' + escapeRegExp(term) + ')', 'ig');
+      escaped = escaped.replace(re, '<mark>$1</mark>');
+    });
+    return prefix + escaped + suffixStr;
+  }
+
+  function highlightTerms(text, terms) {
+    var escaped = escapeHtml(text || '');
+    terms.forEach(function (term) {
+      if (!term) return;
+      var re = new RegExp('(' + escapeRegExp(term) + ')', 'ig');
+      escaped = escaped.replace(re, '<mark>$1</mark>');
+    });
+    return escaped;
+  }
+
+  function buildPaginationItems(current, total) {
+    var pages = Array.from(new Set([1, total, Math.max(1, current - 1), current, Math.min(total, current + 1)])).sort(function (a, b) { return a - b; });
+    var items = [];
+    var prev = null;
+    pages.forEach(function (p) {
+      if (prev !== null && p - prev > 1) items.push(null);
+      items.push(p);
+      prev = p;
+    });
+    return items;
+  }
+
+  function buildResultCard(r, terms) {
+    var html = '<div class="result-card">';
+    html += '<div class="result-card__header">';
+    html += '<a class="result-card__title" href="' + r.h + '">';
+    if (r.st) html += '<span class="sticky-badge">Pinned</span>';
+    if (r.cl) html += '<span class="closed-badge">Closed</span>';
+    html += highlightTerms(r.t, terms) + '</a>';
+    html += '<span class="result-card__stats"><strong>' + r.r + '</strong> replies &middot; <strong>' + r.v + '</strong> views</span>';
+    html += '</div>';
+    html += '<p class="result-card__meta">' + escapeHtml(r.s || '') + ' &middot; Started by ' + escapeHtml(r.o) + ' &middot; ' + escapeHtml(r.pd || '') + (r.ld ? ' &middot; last activity ' + escapeHtml(r.ld) : '') + '</p>';
+    html += '<p class="result-card__snippet">' + buildSnippet(r, terms) + '</p>';
+    html += '</div>';
+    return html;
+  }
+
+  function render() {
+    var resultsEl = document.getElementById('resultsContainer');
+    var statusEl = document.getElementById('statusLine');
+    var paginationEl = document.getElementById('paginationContainer');
+    var pageIndicatorEl = document.getElementById('pageIndicator');
+    var pageJumpEl = document.getElementById('pageJumpForm');
+
+    var q = document.getElementById('searchInput').value.trim();
+
+    if (!q) {
+      statusEl.textContent = 'Type something above to search thread titles and full post content across the whole archive.';
+      resultsEl.innerHTML = '';
+      paginationEl.style.display = 'none';
+      pageIndicatorEl.style.display = 'none';
+      pageJumpEl.style.display = 'none';
+      return;
+    }
+
+    var terms = normalize(q).split(/\s+/).filter(Boolean);
+    var results = (window.SEARCH_INDEX_FULL || []).filter(function (r) {
+      return matchRecord(r, terms);
+    });
+
+    state.results = results;
+    var totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
+    if (state.page > totalPages) state.page = totalPages;
+    if (state.page < 1) state.page = 1;
+
+    statusEl.innerHTML = '<strong>' + results.length + '</strong> thread' + (results.length !== 1 ? 's' : '') + ' found for &ldquo;' + escapeHtml(q) + '&rdquo;';
+
+    if (results.length === 0) {
+      resultsEl.innerHTML = '<div class="empty-state">No matching threads found. Try different keywords.</div>';
+      paginationEl.style.display = 'none';
+      pageIndicatorEl.style.display = 'none';
+      pageJumpEl.style.display = 'none';
+      return;
+    }
+
+    var pageResults = results.slice((state.page - 1) * PAGE_SIZE, state.page * PAGE_SIZE);
+    var html = '';
+    pageResults.forEach(function (r) {
+      html += buildResultCard(r, terms);
+    });
+    resultsEl.innerHTML = html;
+
+    if (totalPages > 1) {
+      var items = buildPaginationItems(state.page, totalPages);
+      var pHtml = '<a data-page="' + (state.page - 1) + '" class="' + (state.page === 1 ? 'disabled' : '') + '">&larr; Prev</a>';
+      items.forEach(function (p) {
+        if (p === null) {
+          pHtml += '<span class="ellipsis">&hellip;</span>';
+        } else {
+          pHtml += '<a data-page="' + p + '" class="' + (p === state.page ? 'current' : '') + '">' + p + '</a>';
+        }
+      });
+      pHtml += '<a data-page="' + (state.page + 1) + '" class="' + (state.page === totalPages ? 'disabled' : '') + '">Next &rarr;</a>';
+      paginationEl.innerHTML = pHtml;
+      paginationEl.style.display = 'flex';
+      pageIndicatorEl.textContent = 'Page ' + state.page + ' of ' + totalPages;
+      pageIndicatorEl.style.display = 'block';
+
+      var pageJumpInput = document.getElementById('pageJumpInput');
+      pageJumpInput.max = totalPages;
+      pageJumpInput.placeholder = String(state.page);
+      pageJumpEl.style.display = 'flex';
+
+      paginationEl.querySelectorAll('a[data-page]').forEach(function (a) {
+        a.addEventListener('click', function (e) {
+          e.preventDefault();
+          var p = parseInt(a.getAttribute('data-page'), 10);
+          if (p >= 1 && p <= totalPages) {
+            state.page = p;
+            render();
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          }
+        });
+      });
+    } else {
+      paginationEl.style.display = 'none';
+      pageIndicatorEl.style.display = 'none';
+      pageJumpEl.style.display = 'none';
+    }
+  }
+
+  function runSearchFromUrl() {
+    var params = getQueryParams();
+    document.getElementById('searchInput').value = params.q;
+    state.page = 1;
+    render();
+  }
+
+  document.getElementById('searchForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var q = document.getElementById('searchInput').value.trim();
+    setQueryParams(q, true);
+    state.page = 1;
+    render();
+  });
+
+  document.getElementById('pageJumpForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var totalPages = Math.max(1, Math.ceil(state.results.length / PAGE_SIZE));
+    var n = parseInt(document.getElementById('pageJumpInput').value, 10);
+    if (!n || n < 1) n = 1;
+    if (n > totalPages) n = totalPages;
+    state.page = n;
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  window.addEventListener('popstate', runSearchFromUrl);
+
+  runSearchFromUrl();
+})();
+</script>
+
+</body>
+</html>

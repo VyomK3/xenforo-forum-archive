@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>{{ thread.title }} &middot; {{ site_title }}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #0D1414;
+    --card: #141C1C;
+    --border: #263231;
+    --ink: #E7EEEC;
+    --ink-muted: #8AA09D;
+    --accent: #2FD9CF;
+    --accent-soft: rgba(47, 217, 207, 0.12);
+    --accent-strong: #5FE8DF;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', sans-serif;
+    line-height: 1.6;
+  }
+
+  a { color: var(--accent-strong); }
+
+{% include "_shell_css.html" %}
+
+  .page-head {
+    margin-bottom: 26px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .breadcrumb {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    color: var(--ink-muted);
+    margin: 0 0 10px;
+  }
+
+  .breadcrumb a { color: var(--ink-muted); text-decoration: none; }
+  .breadcrumb a:hover { color: var(--accent-strong); }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 0 0 10px;
+    line-height: 1.3;
+  }
+
+  .thread-meta {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .thread-meta a { color: var(--ink-muted); }
+
+  .posts {
+    position: relative;
+  }
+
+  /* the connecting "trace" line running down the thread, like a circuit */
+  .posts::before {
+    content: "";
+    position: absolute;
+    left: 31px;
+    top: 8px;
+    bottom: 28px;
+    width: 2px;
+    background: var(--border);
+  }
+
+  .post {
+    position: relative;
+    display: grid;
+    grid-template-columns: 64px 1fr;
+    gap: 18px;
+    margin-bottom: 22px;
+  }
+
+  .post__rail {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .post__node {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--paper);
+    box-shadow: 0 0 0 2px var(--border);
+    position: relative;
+    z-index: 1;
+    margin-top: 6px;
+  }
+
+  .avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    object-fit: cover;
+    border: 1px solid var(--border);
+    background: var(--accent-soft);
+    margin-top: 10px;
+  }
+
+  .avatar--placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--accent-strong);
+  }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+  }
+
+  .card--op {
+    border-left: 3px solid var(--accent);
+    box-shadow: 0 0 0 1px rgba(47, 217, 207, 0.15), 0 4px 16px rgba(47, 217, 207, 0.08);
+  }
+
+  .card__header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-bottom: 10px;
+  }
+
+  .author-line {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .author-name {
+    font-weight: 600;
+    font-size: 15px;
+    text-decoration: none;
+    color: var(--ink);
+  }
+
+  .op-badge {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+
+  .post-index {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .timestamp {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--ink-muted);
+  }
+
+  .card__body {
+    font-size: 15px;
+    color: var(--ink);
+  }
+
+  .card__body img {
+    max-width: 100%;
+    border-radius: 6px;
+    margin: 8px 0;
+  }
+
+  .card__body blockquote {
+    margin: 10px 0;
+    padding: 8px 12px;
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 6px 6px 0;
+    font-size: 14px;
+    color: var(--ink-muted);
+  }
+
+  .card__body pre, .card__body code {
+    background: #0B1010;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+  }
+
+  .card__body pre {
+    padding: 10px 12px;
+    overflow-x: auto;
+  }
+
+  .card__body code {
+    padding: 1px 5px;
+  }
+
+  @media (max-width: 560px) {
+    .posts::before { left: 23px; }
+    .post { grid-template-columns: 48px 1fr; gap: 12px; }
+    .avatar { width: 36px; height: 36px; }
+  }
+</style>
+</head>
+<body>
+
+{% include "_topbar.html" %}
+
+<div class="shell">
+<main>
+  <div class="page-head">
+    <p class="breadcrumb">
+      <a href="{{ home_href }}">{{ site_title }}</a>
+      {% if thread.breadcrumb_parts %}
+        {% for part in thread.breadcrumb_parts[:-1] %} / {{ part }}{% endfor %}
+        {% if thread.breadcrumb_href %} / <a href="{{ thread.breadcrumb_href }}">{{ thread.breadcrumb_parts[-1] }}</a>{% else %} / {{ thread.breadcrumb_parts[-1] }}{% endif %}
+      {% else %}
+        / Thread
+      {% endif %}
+    </p>
+    <h1>{{ thread.title }}</h1>
+    <p class="thread-meta">
+      {{ post_count }} post{{ 's' if post_count != 1 else '' }}
+      &middot; originally from
+      <a href="{{ thread.url }}" target="_blank" rel="noopener">{{ thread.url }}</a>
+    </p>
+  </div>
+
+<div class="posts">
+  {% for post in posts %}
+  <article class="post">
+    <div class="post__rail">
+      <div class="post__node"></div>
+      {% if post.avatar_local_path %}
+        <img class="avatar" src="{{ post.avatar_local_path }}" alt="{{ post.author }}">
+      {% else %}
+        <div class="avatar avatar--placeholder">{{ post.author[:1]|upper }}</div>
+      {% endif %}
+    </div>
+
+    <div class="card {{ 'card--op' if loop.first else '' }}">
+      <div class="card__header">
+        <div class="author-line">
+          {% if post.author_profile_url %}
+            <a class="author-name" href="{{ post.author_profile_url }}" target="_blank" rel="noopener">{{ post.author }}</a>
+          {% else %}
+            <span class="author-name">{{ post.author }}</span>
+          {% endif %}
+          {% if loop.first %}<span class="op-badge">Original post</span>{% endif %}
+          <span class="post-index">#{{ post.post_number }}</span>
+        </div>
+        <span class="timestamp">{{ post.timestamp_display }}</span>
+      </div>
+      <div class="card__body">
+        {{ post.content_html | safe }}
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+  </div>
+</main>
+
+{% include "_sidebar.html" %}
+</div>
+
+<footer class="shell-footer">
+  Rendered from local archive &middot; {{ post_count }} post{{ 's' if post_count != 1 else '' }} total
+</footer>
+
+</body>
+</html>

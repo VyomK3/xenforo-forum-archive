@@ -1,0 +1,44 @@
+<aside class="sidebar">
+  {% if show_search_panel %}
+  <div class="panel">
+    <p class="panel__title">Search the archive</p>
+    <form action="{{ rel }}search.html" method="get">
+      <input class="sb-search-input" type="text" name="q" placeholder="Thread titles or posters&hellip;" autocomplete="off">
+      <button class="sb-search-btn" type="submit">Search</button>
+    </form>
+    <a class="sb-search-alt" href="{{ rel }}full_search.html">Full Thread Search &rarr;</a>
+  </div>
+  {% endif %}
+
+  {% if sidebar and sidebar.stats %}
+  <div class="panel">
+    <p class="panel__title">Archive info</p>
+    <div class="sb-stat"><span>Sections</span><b>{{ sidebar.stats.sections }}</b></div>
+    <div class="sb-stat"><span>Sub-sections</span><b>{{ sidebar.stats.subsections }}</b></div>
+    <div class="sb-stat"><span>Threads</span><b>{{ sidebar.stats.threads }}</b></div>
+    <div class="sb-stat"><span>Posts</span><b>{{ sidebar.stats.posts }}</b></div>
+    {% if snapshot_date %}<div class="sb-stat"><span>Snapshot</span><b>{{ snapshot_date }}</b></div>{% endif %}
+  </div>
+  {% endif %}
+
+  {% if sidebar and sidebar.nav %}
+  <div class="panel">
+    <p class="panel__title">Jump to section</p>
+    {% for item in sidebar.nav %}
+    <a class="sb-nav-link" href="{{ rel }}{{ item.href }}">{{ item.name }} <small>{{ item.count }}</small></a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if sidebar and sidebar.top_threads %}
+  <div class="panel">
+    <p class="panel__title">Most viewed threads</p>
+    {% for t in sidebar.top_threads %}
+    <div class="sb-thread">
+      <a href="{{ rel }}{{ t.href }}">{{ t.title }}</a>
+      <small>{{ t.replies }} replies &middot; {{ t.views }} views{% if t.section %} &middot; {{ t.section }}{% endif %}</small>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</aside>

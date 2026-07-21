@@ -43,7 +43,7 @@ Usage:
 
 Example:
     python scrape_thread_to_db.py \
-        "xenforo_based_forum_URL" \
+        "https://geek.digit.in/community/threads/new-monitor-unable-to-show-correct-resolution.137002/" \
         --db forum_data.db --assets-dir forum_assets
 
     python scrape_thread_to_db.py --csv threads.csv --db forum_data.db --assets-dir forum_assets
@@ -117,19 +117,23 @@ def log_to_file(log_file_path: str, message: str) -> None:
         log(f"  Warning: could not write to log file {log_file_path}: {exc}")
 
 
-def checkpoint_postfix(succeeded: int, failed: int, skipped: int, backup_every: int, no_backup: bool) -> dict:
+def checkpoint_postfix(succeeded: int, failed: int, skipped: int, backup_every: int, no_backup: bool) -> str:
     """
-    Build a small dict for tqdm.set_postfix() so the live progress bar shows,
-    at a glance: how many threads succeeded/failed/were skipped so far, and
-    how many more successful scrapes are needed before the next backup
-    checkpoint fires.
+    Build a compact, fixed-order status string for tqdm.set_postfix_str() so
+    the live progress bar shows, at a glance: how many more successful
+    scrapes are needed before the next backup checkpoint fires, plus running
+    succeeded/failed/skipped counts.
+
+    A plain string (rather than tqdm.set_postfix()'s dict form) gives full
+    control over both ordering and length: next_bkup is listed first so it
+    survives being cut off first on a narrow terminal, and short labels with
+    no extra separators keep the whole line as short as possible.
     """
-    postfix = {"ok": succeeded, "failed": failed, "skip": skipped}
     if no_backup or backup_every <= 0:
-        postfix["next_backup"] = "off"
+        next_backup = "off"
     else:
-        postfix["next_backup"] = f"in {backup_every - (succeeded % backup_every)}"
-    return postfix
+        next_backup = f"in {backup_every - (succeeded % backup_every)}"
+    return f"next_bkup={next_backup} ok={succeeded} fail={failed} skip={skipped}"
 
 
 def backup_database(conn: sqlite3.Connection, db_path: str) -> str:
@@ -174,15 +178,41 @@ def normalize_base_url(thread_url: str) -> str:
     return thread_url
 
 
-def get_last_page_number(soup: BeautifulSoup) -> int:
+def get_last_page_number(soup: BeautifulSoup, base_url: str) -> int:
+    """
+    Determine how many pages this thread has, using ONLY the thread's own
+    pagination controls.
+
+    Deliberately scoped, rather than scanning the whole page: forum pages
+    commonly include sidebar/footer widgets (e.g. "Similar threads",
+    "Latest activity", "New posts") that link to OTHER threads — some of
+    which can be extremely long (this forum has threads with 1000+ pages).
+    An unscoped href/text search can misread one of those unrelated links or
+    phrases as this thread's own page count, making a genuinely single-page
+    thread appear to have hundreds or thousands of pages.
+    """
+    thread_path = urlparse(base_url).path  # e.g. /community/threads/some-thread.90667/
     max_page = 1
+
     for a in soup.find_all("a", href=True):
-        m = re.search(r"/page-(\d+)/?$", a["href"])
+        href_path = urlparse(urljoin(base_url, a["href"])).path
+        if not href_path.startswith(thread_path):
+            continue  # belongs to a different thread/page entirely — ignore it
+        m = re.search(r"/page-(\d+)/?$", href_path)
         if m:
             max_page = max(max_page, int(m.group(1)))
-    text_match = re.search(r"\b\d+\s+of\s+(\d+)\b", soup.get_text())
-    if text_match:
-        max_page = max(max_page, int(text_match.group(1)))
+
+    # "Page X of Y"-style text is only trusted inside an actual pagination
+    # control (XenForo's pageNav/pageNavSimple/pageNavWrapper elements), not
+    # the whole page body — a page-wide search can false-positive on
+    # unrelated "N of M" phrases (star ratings, "showing X of Y members",
+    # poll results, etc.).
+    nav = soup.select_one(".pageNav, .pageNavSimple, .pageNavWrapper")
+    if nav:
+        text_match = re.search(r"\b\d+\s+of\s+(\d+)\b", nav.get_text())
+        if text_match:
+            max_page = max(max_page, int(text_match.group(1)))
+
     return max_page
 
 
@@ -262,7 +292,9 @@ def slug_from_url(url: str) -> str:
     return m.group(1) if m else "thread"
 
 
-def read_urls_from_db(conn: sqlite3.Connection, posters: list = None, thread_ids: list = None) -> list:
+def read_urls_from_db(
+    conn: sqlite3.Connection, posters: list = None, thread_ids: list = None, exclude_ok: bool = False
+) -> list:
     """
     Read the list of thread URLs to scrape from the `threads` table of the
     already-open database connection (the `url` column), ordered by id so
@@ -275,6 +307,10 @@ def read_urls_from_db(conn: sqlite3.Connection, posters: list = None, thread_ids
         (the forum's own thread id, as opposed to this table's internal
         autoincrement `id`). A thread matching ANY of the given ids is
         included.
+    exclude_ok: if True, threads whose last_scrape_status is already 'ok'
+        are excluded directly in the SQL query, so they're never loaded into
+        memory, iterated over, or logged as "skipping" one by one — the
+        returned list only ever contains threads that actually need work.
 
     If both posters and thread_ids are given, only threads matching at least
     one poster AND at least one thread_id are included.
@@ -291,6 +327,9 @@ def read_urls_from_db(conn: sqlite3.Connection, posters: list = None, thread_ids
         placeholders = ", ".join("?" for _ in thread_ids)
         query += f" AND thread_id IN ({placeholders})"
         params.extend(thread_ids)
+
+    if exclude_ok:
+        query += " AND (last_scrape_status IS NULL OR last_scrape_status != 'ok')"
 
     query += " ORDER BY id"
     rows = conn.execute(query, params).fetchall()
@@ -435,64 +474,89 @@ def thread_marked_scraped_ok(conn: sqlite3.Connection, url: str) -> bool:
     return row is not None and row[0] == "ok"
 
 
-def mark_thread_error(conn: sqlite3.Connection, url: str) -> None:
+def _get_or_create_thread_row(conn: sqlite3.Connection, url: str, title: str, page_count) -> int:
     """
-    Record a failed scrape attempt on an existing threads row (e.g. a URL
-    read via --from-db that couldn't be fetched at all). If no row exists
-    yet for this URL, there's nothing to stamp, so this is a no-op — the
-    next successful scrape attempt will create the row via upsert_thread.
-    """
-    row = conn.execute("SELECT id FROM threads WHERE url = ?", (url,)).fetchone()
-    if row is None:
-        return
-    now = datetime.now(timezone.utc).isoformat()
-    conn.execute(
-        "UPDATE threads SET last_scraped_at = ?, last_scrape_status = ? WHERE id = ?",
-        (now, "error", row[0]),
-    )
-    conn.commit()
-
-
-def upsert_thread(conn: sqlite3.Connection, url: str, title: str, page_count: int) -> int:
-    """
-    Get the id of the threads row for `url`, creating it if needed, and stamp
-    it as just-scraped.
+    Get the id of the threads row for `url`, creating it if needed. Does NOT
+    touch last_scraped_at/last_scrape_status — callers stamp those explicitly
+    via mark_thread_ok/mark_thread_error once the actual outcome is known.
 
     If a row for this URL already exists — e.g. it was populated ahead of
     time by an indexing step, possibly in a table with columns this script
     doesn't know about (no `page_count`, extra metadata fields, etc.) — it is
-    left untouched aside from the last_scraped_at/last_scrape_status tracking
-    columns. Otherwise a new row is inserted using only the columns that
-    actually exist in this database's threads table.
+    left completely untouched. Otherwise a new row is inserted using only the
+    columns that actually exist in this database's threads table.
     """
-    now = datetime.now(timezone.utc).isoformat()
     row = conn.execute("SELECT id FROM threads WHERE url = ?", (url,)).fetchone()
-
     if row is not None:
-        thread_id = row[0]
-        conn.execute(
-            "UPDATE threads SET last_scraped_at = ?, last_scrape_status = ? WHERE id = ?",
-            (now, "ok", thread_id),
-        )
-        conn.commit()
-        return thread_id
+        return row[0]
 
+    now = datetime.now(timezone.utc).isoformat()
     cols = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
     candidate_fields = {
         "url": url,
         "title": title,
         "page_count": page_count,
         "scraped_at": now,
-        "last_scraped_at": now,
-        "last_scrape_status": "ok",
     }
-    fields = {k: v for k, v in candidate_fields.items() if k in cols}
+    fields = {k: v for k, v in candidate_fields.items() if k in cols and v is not None}
+    # `title` is NOT NULL on some schemas (e.g. a richly pre-populated
+    # forum_index.db) — fall back to the URL itself if we don't know the
+    # real title yet (e.g. we're creating this row purely to record a
+    # page-1 fetch failure).
+    if "title" in cols and "title" not in fields:
+        fields["title"] = title or url
     colnames = ", ".join(fields)
     placeholders = ", ".join("?" for _ in fields)
     conn.execute(f"INSERT INTO threads ({colnames}) VALUES ({placeholders})", tuple(fields.values()))
     conn.commit()
     row = conn.execute("SELECT id FROM threads WHERE url = ?", (url,)).fetchone()
     return row[0]
+
+
+def _stamp_thread_status(conn: sqlite3.Connection, url: str, status: str, title: str = None, page_count=None) -> None:
+    """Create the threads row if needed, then set last_scraped_at/last_scrape_status."""
+    thread_id = _get_or_create_thread_row(conn, url, title, page_count)
+    now = datetime.now(timezone.utc).isoformat()
+    conn.execute(
+        "UPDATE threads SET last_scraped_at = ?, last_scrape_status = ? WHERE id = ?",
+        (now, status, thread_id),
+    )
+    conn.commit()
+
+
+def mark_thread_ok(conn: sqlite3.Connection, url: str) -> None:
+    """
+    Record that this thread was scraped completely and successfully — every
+    page fetched and saved with no errors. Only call this once the entire
+    scrape of the thread has actually finished; see mark_thread_error for the
+    "anything went wrong" case.
+    """
+    _stamp_thread_status(conn, url, "ok")
+
+
+def mark_thread_error(conn: sqlite3.Connection, url: str, title: str = None) -> None:
+    """
+    Record a failed (or incomplete) scrape attempt. Creates the threads row
+    if it doesn't exist yet (e.g. a brand-new single-URL/--csv target that
+    failed on its very first page fetch), using `title` as a placeholder if
+    the real title isn't known yet — falls back to the URL itself.
+    """
+    _stamp_thread_status(conn, url, "error", title=title or url)
+
+
+def upsert_thread(conn: sqlite3.Connection, url: str, title: str, page_count: int) -> int:
+    """
+    Get the id of the threads row for `url`, creating it if needed. Does NOT
+    mark it as scraped-ok — see mark_thread_ok/mark_thread_error, which are
+    called once the real outcome is known.
+
+    If a row for this URL already exists — e.g. it was populated ahead of
+    time by an indexing step, possibly in a table with columns this script
+    doesn't know about (no `page_count`, extra metadata fields, etc.) — it is
+    left completely untouched. Otherwise a new row is inserted using only the
+    columns that actually exist in this database's threads table.
+    """
+    return _get_or_create_thread_row(conn, url, title, page_count)
 
 
 def clear_existing_posts(conn: sqlite3.Connection, thread_id: int):
@@ -621,19 +685,20 @@ def scrape_one_thread(thread_url: str, conn: sqlite3.Connection, session: reques
         return False
 
     soup = BeautifulSoup(first_html, "html.parser")
-    last_page = get_last_page_number(soup)
+    last_page = get_last_page_number(soup, base_url)
     title = get_thread_title(soup)
     log(f"Thread: {title!r} — {last_page} page(s) detected.")
 
     if thread_pbar is not None:
-        short_title = (title[:40] + "…") if len(title) > 40 else title
+        short_title = (title[:22] + "…") if len(title) > 22 else title
         thread_pbar.set_description(f"Threads [{short_title}]")
 
     thread_id = upsert_thread(conn, base_url, title, last_page)
     clear_existing_posts(conn, thread_id)
 
     next_post_number = 1
-    with tqdm(total=last_page, desc="  Pages", unit="page", position=1, leave=False) as page_pbar:
+    any_page_failed = False
+    with tqdm(total=last_page, desc="  Pages", unit="page", position=1, leave=False, dynamic_ncols=True) as page_pbar:
         for page_number in range(1, last_page + 1):
             url = page_url(base_url, page_number)
             if page_number == 1:
@@ -644,6 +709,7 @@ def scrape_one_thread(thread_url: str, conn: sqlite3.Connection, session: reques
                 html = fetch(url, session)
                 if html is None:
                     log(f"  Skipping page {page_number} after repeated failures.")
+                    any_page_failed = True
                     page_pbar.update(1)
                     continue
 
@@ -654,7 +720,13 @@ def scrape_one_thread(thread_url: str, conn: sqlite3.Connection, session: reques
             next_post_number += len(posts)
             page_pbar.update(1)
 
+    if any_page_failed:
+        log(f"Done with {base_url}, but with 1+ pages skipped — {next_post_number - 1} post(s) saved. Marking for retry.\n")
+        mark_thread_error(conn, base_url, title=title)
+        return False
+
     log(f"Done with {base_url} — {next_post_number - 1} post(s) saved.\n")
+    mark_thread_ok(conn, base_url)
     return True
 
 
@@ -791,44 +863,63 @@ def main():
         image_cache = {}
         conn = init_db(args.db)
 
-        if args.csv_path:
-            urls = read_urls_from_csv(args.csv_path)
-            if not urls:
-                sys.exit(f"No URLs found in {args.csv_path}.")
-            log(f"Loaded {len(urls)} thread URL(s) from {args.csv_path}.\n")
+        # Decide skip-existing behavior first so already-'ok' threads can be
+        # excluded before the list is even built/loaded, rather than being
+        # loaded, iterated, and logged one-by-one just to be skipped.
+        if args.from_db:
+            # --from-db defaults to skipping already-scraped threads; --rescrape-all overrides that.
+            skip_existing = not args.rescrape_all
+        else:
             skip_existing = args.skip_existing
+
+        if args.csv_path:
+            all_urls = read_urls_from_csv(args.csv_path)
+            if not all_urls:
+                sys.exit(f"No URLs found in {args.csv_path}.")
+            if skip_existing:
+                urls = [u for u in all_urls if not thread_marked_scraped_ok(conn, normalize_base_url(u))]
+                skipped = len(all_urls) - len(urls)
+                excl_msg = f" ({skipped} already scraped and excluded)" if skipped else ""
+            else:
+                urls = all_urls
+                excl_msg = ""
+            if not urls:
+                sys.exit(f"All {len(all_urls)} thread(s) in {args.csv_path} already have last_scrape_status='ok'; nothing to do.")
+            log(f"Loaded {len(urls)} thread URL(s) from {args.csv_path}{excl_msg}.\n")
         elif args.from_db:
-            urls = read_urls_from_db(conn, posters=args.poster, thread_ids=args.thread_ids)
+            urls = read_urls_from_db(conn, posters=args.poster, thread_ids=args.thread_ids, exclude_ok=skip_existing)
             filt_parts = []
             if args.poster:
                 filt_parts.append(f"poster in {args.poster}")
             if args.thread_ids:
                 filt_parts.append(f"thread_id in {args.thread_ids}")
             filt_msg = f" (filtered by {' and '.join(filt_parts)})" if filt_parts else ""
+            excl_msg = ""
+            if skip_existing:
+                total_matching = len(read_urls_from_db(conn, posters=args.poster, thread_ids=args.thread_ids))
+                skipped = total_matching - len(urls)
+                if skipped:
+                    excl_msg = f" ({skipped} already scraped and excluded)"
             if not urls:
-                sys.exit(f"No thread URLs found in the threads table of {args.db}{filt_msg}.")
-            log(f"Loaded {len(urls)} thread URL(s) from the threads table of {args.db}{filt_msg}.\n")
-            # --from-db defaults to skipping already-scraped threads; --rescrape-all overrides that.
-            skip_existing = not args.rescrape_all
+                sys.exit(
+                    f"No thread URLs left to scrape in the threads table of {args.db}{filt_msg}{excl_msg} "
+                    "(pass --rescrape-all to re-scrape anyway)."
+                )
+            log(f"Loaded {len(urls)} thread URL(s) from the threads table of {args.db}{filt_msg}{excl_msg}.\n")
         else:
+            if skip_existing and thread_marked_scraped_ok(conn, normalize_base_url(args.thread_url)):
+                sys.exit(
+                    f"{args.thread_url} already has last_scrape_status='ok' in {args.db}; nothing to do "
+                    "(run without --skip-existing to re-scrape it)."
+                )
             urls = [args.thread_url]
-            skip_existing = args.skip_existing
 
         made_previous_request = False
         scraping_started = True
-        with tqdm(total=len(urls), desc="Threads", unit="thread", position=0) as thread_pbar:
-            thread_pbar.set_postfix(checkpoint_postfix(succeeded, failed, skipped, args.backup_every, args.no_backup))
+        with tqdm(total=len(urls), desc="Threads", unit="thread", position=0, dynamic_ncols=True) as thread_pbar:
+            thread_pbar.set_postfix_str(checkpoint_postfix(succeeded, failed, skipped, args.backup_every, args.no_backup))
             for i, url in enumerate(urls, start=1):
                 base_url = normalize_base_url(url)
-
-                if skip_existing and thread_marked_scraped_ok(conn, base_url):
-                    log(f"[{i}/{len(urls)}] last_scrape_status is 'ok' in {args.db}, skipping: {base_url}")
-                    skipped += 1
-                    thread_pbar.update(1)
-                    thread_pbar.set_postfix(
-                        checkpoint_postfix(succeeded, failed, skipped, args.backup_every, args.no_backup)
-                    )
-                    continue
 
                 if made_previous_request:
                     # Same politeness delay used between pages, applied between
@@ -842,6 +933,10 @@ def main():
                     )
                 except Exception as exc:
                     log(f"  Unexpected error scraping {url}: {exc}")
+                    try:
+                        mark_thread_error(conn, base_url)
+                    except Exception as mark_exc:
+                        log(f"  Warning: could not mark {base_url} as errored: {mark_exc}")
                     ok = False
                 made_previous_request = True
                 thread_pbar.update(1)
@@ -857,7 +952,7 @@ def main():
                         log_to_file(log_file, f"BACKUP | checkpoint at {succeeded} threads | {backup_path}")
                 else:
                     failed += 1
-                thread_pbar.set_postfix(
+                thread_pbar.set_postfix_str(
                     checkpoint_postfix(succeeded, failed, skipped, args.backup_every, args.no_backup)
                 )
 
@@ -874,14 +969,12 @@ def main():
         conn.close()
         conn = None
 
-        if len(urls) > 1:
+        is_batch_mode = bool(args.csv_path or args.from_db)
+        if is_batch_mode:
             log(
                 f"Batch complete: {succeeded} succeeded, {failed} failed, "
                 f"{skipped} skipped (already scraped). Data saved to {args.db}."
             )
-        elif skipped:
-            hint = "--rescrape-all" if args.from_db else "without --skip-existing"
-            log(f"Thread already scraped (last_scrape_status='ok') in {args.db}; nothing to do (use {hint} to re-scrape it).")
         elif succeeded:
             log(f"Data saved to {args.db}. Images saved under {args.assets_dir}/")
         else:

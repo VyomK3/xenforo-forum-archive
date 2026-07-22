@@ -73,6 +73,7 @@ On Debian/Ubuntu with a managed Python you may need
 xenforo-archiver/
 ├── scrape_forum_threads.py     # stage 1 — index the forum tree
 ├── scrape_thread_to_db.py      # stage 2 — scrape posts
+├── dedupe_posts.py             # maintenance — remove duplicate posts rows
 ├── generate_site.py            # stage 3 — static build (also a library for stage 4)
 ├── app.py                      # stage 4 — Flask app
 ├── prepare_db.py               # stage 4 — one-time DB preparation
@@ -251,7 +252,66 @@ leaves all existing columns alone and only touches two tracking columns it adds
 itself:
 
 - `last_scraped_at` — timestamp of the most recent scrape attempt
-- `last_scrape_status` — `ok` or `error`
+- `last_scrape_status` — `ok`, `error`, or `stale` (the last set by
+  `--check-updates`; see *Re-scraping and fetching new posts* below)
+
+## Re-scraping and fetching new posts
+
+Re-running the scraper over threads it has already seen is **incremental and
+duplicate-safe**, and there is a dedicated mode for pulling in new replies that
+have appeared since the archive was made.
+
+### Duplicate-safe by design
+
+Posts are keyed by their forum post id. The `posts` table carries a unique index
+on `(thread_id, site_post_id)`, and every insert is an `INSERT OR IGNORE`, so a
+post already stored is never saved twice. The script creates this index
+automatically on first run. (If an *older* database already contains duplicates,
+the index can't be built until they're removed — see the `dedupe_posts.py`
+maintenance section below.)
+
+Because of that, **re-scraping a thread only appends its genuinely new posts** —
+the posts already stored are left untouched:
+
+- **It resumes from the last stored page.** New posts land at the end of a
+  thread, so a thread previously scraped in full is re-fetched from its last
+  stored page (which may have gained posts) plus any newer pages — not from page
+  1 — and images for posts already held are not re-downloaded. A thread whose
+  last attempt didn't finish cleanly (`last_scrape_status` is `error`/absent)
+  falls back to a full page-1 pass so any gaps are filled.
+- **Edits and deletions are not picked up by default.** Since existing posts are
+  skipped, a post edited or deleted on the forum after archiving keeps its stored
+  copy. Use `--rescrape-all` to force a clean rebuild (wipe each thread's posts
+  and re-insert from scratch), which reflects upstream edits and deletions.
+
+### Fetching new posts on already-archived threads (`--check-updates`)
+
+Once a forum is archived, threads keep getting replies. To pull in just the new
+posts without re-scraping everything:
+
+1. **Refresh the index (stage 1).** Re-run `scrape_forum_threads.py` against the
+   same database. Thread rows are upserted by URL, so this updates each thread's
+   `replies` and `last_post_date_*` to the forum's current values — cheaply, from
+   listing pages (dozens of threads per request), not one request per thread.
+2. **Scrape the grown threads (stage 2 with `--check-updates`).** This compares
+   each already-`ok` thread's refreshed `replies` count against how many posts
+   are actually stored for it, marks the ones that gained posts as `stale`, and
+   re-scrapes exactly those (incrementally, so only the new posts are fetched).
+
+```bash
+# 1. refresh reply counts / last-post dates from the live forum
+python3 scrape_forum_threads.py --db forum_index.db --resume
+
+# 2. preview which threads have new posts, without scraping
+python3 scrape_thread_to_db.py --from-db --db forum_index.db --check-updates --check-only
+
+# 3. mark grown threads and scrape their new posts
+python3 scrape_thread_to_db.py --from-db --db forum_index.db --check-updates
+```
+
+Step 1 is essential: until the index is refreshed, the stored `replies` value is
+the snapshot from the original crawl and won't reveal new posts. `--check-updates`
+requires the `replies` column, which a stage-1 database has.
 
 ## All parameters
 
@@ -276,11 +336,19 @@ itself:
 | Parameter | Description |
 |---|---|
 | `--skip-existing` | For single-URL / `--csv` mode: skip a thread whose `last_scrape_status` is already `ok`. (Off by default in these modes.) |
-| `--rescrape-all` | Only meaningful with `--from-db`. Re-scrape every matching thread even if already `ok`. **`--from-db` skips already-`ok` threads by default** — this flag turns that off. |
+| `--rescrape-all` | Force a **full rebuild** of each scraped thread: wipe its stored posts and re-insert from scratch, so upstream edits and deletions are reflected (the default appends only new posts — see *Re-scraping and fetching new posts* above). With `--from-db` it **also** re-scrapes threads already marked `ok` (normally skipped). |
 
 A thread whose last attempt *failed* (`last_scrape_status = error`), or that was
 never scraped at all, is never skipped — only a prior `ok` counts as "already
 scraped."
+
+### Detecting new posts (only valid with `--from-db`)
+
+| Parameter | Description |
+|---|---|
+| `--check-updates` | Before scraping, mark already-`ok` threads whose forum `replies` count now exceeds their stored post count as `stale`, then scrape those. Only threads that **gained** posts are chased; upstream deletions are ignored. Refresh the index (stage 1) first so `replies` is current. Requires a `replies` column. |
+| `--check-only` | With `--check-updates`: do the marking, then stop **without** scraping (review first, then re-run with a plain `--from-db`). |
+| `--include-closed` | With `--check-updates`: also check closed/locked threads. Excluded by default, since a locked thread shouldn't gain posts — and this avoids accidentally re-scraping tens of thousands of them. |
 
 ### Filtering (only valid with `--from-db`)
 
@@ -346,12 +414,13 @@ The progress bar carries a running postfix so you always know how things are
 going without waiting for the log file:
 
 ```
-Threads:  29%|██▉ | 147/500 [12:34<28:11, ok=140, failed=2, skip=5, next_backup=in 60]
+Threads:  29%|██▉ | 147/500 [12:34<28:11, next_bkup=in 53 ok=140 fail=2 skip=5]
 ```
 
-- `ok` / `failed` / `skip` — running counts of successful, failed, skipped threads
-- `next_backup` — successful scrapes remaining until the next `--backup-every`
-  checkpoint (`off` if backups are disabled)
+- `next_bkup` — successful scrapes remaining until the next `--backup-every`
+  checkpoint, capped at the number of threads left in the run (so a short batch
+  shows an honest `in 5` rather than `in 200`); `off` if backups are disabled
+- `ok` / `fail` / `skip` — running counts of successful, failed, skipped threads
 
 ## Examples
 
@@ -371,7 +440,11 @@ python3 scrape_thread_to_db.py --csv threads.csv --db forum_data.db --skip-exist
 # Every thread indexed in stage 1 (already-ok threads skipped by default)
 python3 scrape_thread_to_db.py --from-db --db forum_index.db --assets-dir forum_assets
 
-# Same, but force re-scraping everything
+# Fetch new posts on already-archived threads that have since grown
+# (refresh the index with stage 1 first — see "Fetching new posts" above)
+python3 scrape_thread_to_db.py --from-db --db forum_index.db --check-updates
+
+# Force a full rebuild (wipe + re-insert) to capture upstream edits/deletions
 python3 scrape_thread_to_db.py --from-db --db forum_index.db --rescrape-all
 
 # Only threads started by specific posters
@@ -402,6 +475,61 @@ python3 scrape_thread_to_db.py --from-db --db forum_index.db --log-file /var/log
 - Only **successful** scrapes count toward the `--backup-every` checkpoint.
 - Backup files accumulate — the script never deletes old ones, so periodically
   clean out `*_backup_*.db` files you no longer need.
+
+---
+
+# Maintenance — remove duplicate posts (`dedupe_posts.py`)
+
+The stage-2 scraper prevents duplicate posts from being created in the first
+place (unique index on `(thread_id, site_post_id)` + `INSERT OR IGNORE`).
+`dedupe_posts.py` is for cleaning a database that *already* contains
+duplicates — e.g. one built by an older version of the scraper that
+wiped-and-reinserted, or a thread that got scraped twice under two slightly
+different URLs. It's also what to run if stage 2 warns it couldn't create the
+unique index because duplicates already exist.
+
+## What counts as a duplicate
+
+Rows sharing the same `(thread_id, site_post_id)` — the forum's own post id, so a
+shared value means the exact same real post stored more than once. Rows with a
+missing/blank `site_post_id` fall back to grouping by
+`(thread_id, page_number, post_number)`. Within each group one row is kept — the
+oldest by internal `id` by default, or the newest with `--keep-latest` — and the
+rest are deleted.
+
+## Run it
+
+```bash
+# Dry run (default) — reports what it found, deletes nothing
+python3 dedupe_posts.py --db forum_index.db
+
+# Write every duplicate row (marked KEEP/DELETE) to a CSV for manual review first
+python3 dedupe_posts.py --db forum_index.db --report-csv duplicates.csv
+
+# Actually remove them (takes an automatic safety backup first)
+python3 dedupe_posts.py --db forum_index.db --apply
+
+# Keep the newest copy of each duplicate instead of the oldest
+python3 dedupe_posts.py --db forum_index.db --apply --keep-latest
+```
+
+## Parameters
+
+| Parameter | Default | Description |
+|---|---|---|
+| `--db DB` | *(required)* | SQLite database to clean. |
+| `--apply` | off (dry run) | Actually delete duplicates. Without it, the script only reports what it would remove. |
+| `--keep-latest` | off | Keep the newest (highest `id`) row in each group instead of the oldest. |
+| `--report-csv PATH` | — | Write full details of every duplicate row, marked `KEEP`/`DELETE`, to a CSV for review. |
+| `--no-backup` | off | Skip the automatic pre-delete backup (only relevant with `--apply`; not recommended). |
+
+Safe by default: it's a **dry run unless you pass `--apply`**, and `--apply` takes
+a consistent SQLite-backup snapshot (`<db>.before_dedupe_<timestamp>.bak`) before
+deleting anything, unless you add `--no-backup`. After deleting, it re-checks that
+no duplicates remain and compacts the file with `VACUUM`.
+
+Once the database is clean, the next `scrape_thread_to_db.py` run can create the
+`(thread_id, site_post_id)` unique index that keeps it that way.
 
 ---
 

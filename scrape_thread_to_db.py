@@ -43,7 +43,7 @@ Usage:
 
 Example:
     python scrape_thread_to_db.py \
-        "https://geek.digit.in/community/threads/new-monitor-unable-to-show-correct-resolution.137002/" \
+        "FORUM_THREAD_URL" \
         --db forum_data.db --assets-dir forum_assets
 
     python scrape_thread_to_db.py --csv threads.csv --db forum_data.db --assets-dir forum_assets
@@ -117,7 +117,9 @@ def log_to_file(log_file_path: str, message: str) -> None:
         log(f"  Warning: could not write to log file {log_file_path}: {exc}")
 
 
-def checkpoint_postfix(succeeded: int, failed: int, skipped: int, backup_every: int, no_backup: bool) -> str:
+def checkpoint_postfix(
+    succeeded: int, failed: int, skipped: int, backup_every: int, no_backup: bool, remaining: int
+) -> str:
     """
     Build a compact, fixed-order status string for tqdm.set_postfix_str() so
     the live progress bar shows, at a glance: how many more successful
@@ -128,11 +130,16 @@ def checkpoint_postfix(succeeded: int, failed: int, skipped: int, backup_every: 
     control over both ordering and length: next_bkup is listed first so it
     survives being cut off first on a narrow terminal, and short labels with
     no extra separators keep the whole line as short as possible.
+
+    remaining: how many not-yet-attempted threads are left in this run. The
+    countdown is capped at this value so a small batch (e.g. 5 threads left
+    with --backup-every 200) shows an honest "in 5" instead of "in 200" — a
+    checkpoint that will never actually fire before the run ends.
     """
     if no_backup or backup_every <= 0:
         next_backup = "off"
     else:
-        next_backup = f"in {backup_every - (succeeded % backup_every)}"
+        next_backup = f"in {min(backup_every - (succeeded % backup_every), remaining)}"
     return f"next_bkup={next_backup} ok={succeeded} fail={failed} skip={skipped}"
 
 
@@ -445,6 +452,7 @@ def init_db(db_path: str) -> sqlite3.Connection:
         """
     )
     _ensure_scrape_tracking_columns(conn)
+    _ensure_posts_unique_index(conn)
     conn.commit()
     return conn
 
@@ -461,6 +469,33 @@ def _ensure_scrape_tracking_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE threads ADD COLUMN last_scraped_at TEXT")
     if "last_scrape_status" not in cols:
         conn.execute("ALTER TABLE threads ADD COLUMN last_scrape_status TEXT")
+
+
+def _ensure_posts_unique_index(conn: sqlite3.Connection) -> None:
+    """
+    Ensure (thread_id, site_post_id) is unique, so save_posts can INSERT OR
+    IGNORE and let already-stored posts fall through untouched instead of
+    duplicating them on a re-scrape. The pair is scoped by thread_id on
+    purpose: XenForo post ids are unique within a thread, but the same id can
+    legitimately appear across two different thread rows (e.g. a thread reached
+    under two URLs), so a global unique on site_post_id alone would wrongly
+    collide.
+
+    Best-effort: if the table already holds duplicate (thread_id, site_post_id)
+    rows from an older run that inserted blindly, the index can't be created —
+    we warn with a remedy rather than aborting the whole run, and dedup simply
+    won't be enforced until those rows are cleaned up.
+    """
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_thread_site "
+            "ON posts (thread_id, site_post_id)"
+        )
+    except sqlite3.Error as exc:
+        log(
+            f"  Warning: could not create unique index on posts(thread_id, site_post_id): {exc}. "
+            "Existing duplicate posts must be removed first; re-scrapes may duplicate posts until then."
+        )
 
 
 def thread_marked_scraped_ok(conn: sqlite3.Connection, url: str) -> bool:
@@ -559,16 +594,94 @@ def upsert_thread(conn: sqlite3.Connection, url: str, title: str, page_count: in
     return _get_or_create_thread_row(conn, url, title, page_count)
 
 
+def mark_threads_with_new_posts(conn: sqlite3.Connection, include_closed: bool = False) -> int:
+    """
+    Find already-scraped ('ok') threads that have GAINED posts since they were
+    archived, and flip their last_scrape_status to 'stale' so a subsequent
+    --from-db run (which skips 'ok' threads) picks them up for a full re-scrape.
+
+    "Gained posts" is decided by comparing the forum's own reply count — the
+    `replies` column, which a re-run of the indexer refreshes in place from the
+    forum's live thread listings — against how many rows we actually hold in
+    the `posts` table for that thread. XenForo's `replies` counts replies only
+    (it excludes the opening post), so a fully-archived thread satisfies
+    `replies + 1 == posts stored`. A thread is only flagged when
+    `replies + 1 > posts stored`, i.e. the forum now has MORE posts than we do.
+    Threads where we hold more than the forum reports (posts deleted upstream)
+    are deliberately left alone — this only chases growth, never shrinkage.
+
+    Requires a `replies` column on the threads table (present in the richer
+    index database produced by the forum indexer, absent from a bare
+    scrape-only database) — raises ValueError if it isn't there.
+
+    include_closed: by default, threads marked closed/locked upstream (the
+        `is_closed` column) are EXCLUDED even if their count looks grown, on
+        the assumption a locked thread can't legitimately accept new posts —
+        this keeps an accidental run from re-scraping the tens of thousands of
+        closed threads. Pass True to check closed threads too. Has no effect
+        if the table has no `is_closed` column.
+
+    Returns the number of threads newly flagged as 'stale'.
+    """
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(threads)")}
+    if "replies" not in cols:
+        raise ValueError(
+            "--check-updates needs a `replies` column on the threads table (the forum's reply "
+            f"count), which {conn} does not have. Point --db at the richer index database (the one "
+            "produced by the forum indexer), and re-run the indexer first so `replies` reflects the "
+            "forum's current counts."
+        )
+
+    # A single-pass aggregate of stored posts-per-thread, keyed for O(log n)
+    # correlated lookups below. Much cheaper than a correlated COUNT(*) over
+    # the ~1.8M-row posts table once per thread.
+    conn.execute("DROP TABLE IF EXISTS _post_counts")
+    conn.execute("CREATE TEMP TABLE _post_counts (thread_id INTEGER PRIMARY KEY, n INTEGER)")
+    conn.execute("INSERT INTO _post_counts (thread_id, n) SELECT thread_id, COUNT(*) FROM posts GROUP BY thread_id")
+
+    where = (
+        "last_scrape_status = 'ok' "
+        "AND replies IS NOT NULL "
+        "AND replies + 1 > COALESCE((SELECT n FROM _post_counts WHERE thread_id = threads.id), 0)"
+    )
+    if not include_closed and "is_closed" in cols:
+        where += " AND COALESCE(is_closed, 0) = 0"
+
+    cur = conn.execute(f"UPDATE threads SET last_scrape_status = 'stale' WHERE {where}")
+    flagged = cur.rowcount
+    conn.commit()
+    conn.execute("DROP TABLE IF EXISTS _post_counts")
+    return flagged
+
+
 def clear_existing_posts(conn: sqlite3.Connection, thread_id: int):
-    """Re-scraping the same thread replaces its posts rather than duplicating them."""
+    """
+    Delete every stored post for a thread so it can be rebuilt from scratch.
+    Used only on the --rescrape-all (full rebuild) path: wiping first is what
+    lets a rebuild pick up upstream EDITS to existing posts and DELETIONS,
+    which the default incremental INSERT OR IGNORE path deliberately leaves
+    untouched.
+    """
     conn.execute("DELETE FROM posts WHERE thread_id = ?", (thread_id,))
     conn.commit()
 
 
-def save_posts(conn: sqlite3.Connection, thread_id: int, posts: list):
+def save_posts(conn: sqlite3.Connection, thread_id: int, posts: list) -> int:
+    """
+    Insert the given posts, skipping any already stored for this thread.
+
+    Dedup is by (thread_id, site_post_id) via INSERT OR IGNORE against the
+    unique index from _ensure_posts_unique_index: a post whose id we already
+    hold falls through untouched, so a re-scrape only appends genuinely new
+    posts rather than duplicating existing ones — no wipe-then-rebuild needed.
+    (On the --rescrape-all path the thread's posts have already been cleared,
+    so every row here is a fresh insert anyway.) Returns how many rows were
+    actually inserted.
+    """
+    before = conn.total_changes
     conn.executemany(
         """
-        INSERT INTO posts (
+        INSERT OR IGNORE INTO posts (
             thread_id, page_number, post_number, site_post_id, author,
             author_profile_url, avatar_local_path, timestamp_iso,
             timestamp_display, content_html
@@ -591,6 +704,53 @@ def save_posts(conn: sqlite3.Connection, thread_id: int, posts: list):
         ],
     )
     conn.commit()
+    return conn.total_changes - before
+
+
+def existing_post_ids(conn: sqlite3.Connection, thread_id: int, min_page: int = None) -> set:
+    """Return the set of site_post_ids already stored for this thread, so an
+    incremental re-scrape can skip re-downloading their images. When min_page
+    is given, only ids on that page or later are returned — enough to cover the
+    pages an incremental resume will actually re-fetch, without loading every id
+    from a long thread's earlier pages."""
+    if min_page is None:
+        rows = conn.execute("SELECT site_post_id FROM posts WHERE thread_id = ?", (thread_id,))
+    else:
+        rows = conn.execute(
+            "SELECT site_post_id FROM posts WHERE thread_id = ? AND page_number >= ?", (thread_id, min_page)
+        )
+    return {r[0] for r in rows}
+
+
+def incremental_resume_point(conn: sqlite3.Connection, thread_id: int, last_page: int, prior_status: str):
+    """
+    Decide which page an incremental (non-rebuild) scrape should start from, and
+    what post_number that page's first post should get. Returns
+    (start_page, start_post_number).
+
+    New posts on a forum thread land at the end, so a thread we already hold in
+    full only needs its last stored page (which may have gained posts) and any
+    pages after it re-fetched — not the whole thing. The last stored page is
+    re-fetched, not skipped, because it may have been partially full last time.
+
+    Resuming mid-thread is only safe when the previous scrape finished fully and
+    contiguously — which last_scrape_status='ok' guarantees (mark_thread_ok is
+    only called when no page was skipped), as does 'stale' (only ever set by
+    --check-updates on a thread that was previously 'ok'). For any other status
+    — a partial/failed prior attempt, or a thread never finished — earlier pages
+    may have gaps, so we start from page 1 and let the page-level dedup sort it
+    out.
+    """
+    if prior_status not in ("ok", "stale"):
+        return 1, 1
+    max_page = conn.execute("SELECT MAX(page_number) FROM posts WHERE thread_id = ?", (thread_id,)).fetchone()[0]
+    if not max_page:
+        return 1, 1
+    start_page = min(max_page, last_page)
+    posts_before = conn.execute(
+        "SELECT COUNT(*) FROM posts WHERE thread_id = ? AND page_number < ?", (thread_id, start_page)
+    ).fetchone()[0]
+    return start_page, posts_before + 1
 
 
 # --------------------------------------------------------------------------
@@ -607,7 +767,20 @@ def get_thread_title(soup: BeautifulSoup) -> str:
 
 
 def parse_posts(html: str, page_url_str: str, page_number: int, start_post_number: int,
-                 session: requests.Session, assets_dir: str, cache: dict):
+                 session: requests.Session, assets_dir: str, cache: dict, known_ids: set = None):
+    """
+    Parse the posts on one thread page. Returns (new_posts, seen_count):
+    new_posts is the list of post dicts NOT already stored, and seen_count is
+    the total number of posts on the page (new or not).
+
+    known_ids: site_post_ids already stored for this thread. A post whose id is
+    in this set is skipped WITHOUT downloading its avatar or inline images —
+    the expensive work — since we already hold it. It's still counted toward
+    seen_count so the caller's running post_number stays aligned with the
+    post's true position in the thread. Pass None/empty (e.g. the --rescrape-all
+    rebuild path) to re-process every post.
+    """
+    known_ids = known_ids or set()
     soup = BeautifulSoup(html, "html.parser")
     posts = soup.select("article.message")
     results = []
@@ -615,6 +788,10 @@ def parse_posts(html: str, page_url_str: str, page_number: int, start_post_numbe
     for offset, post in enumerate(posts):
         post_number = start_post_number + offset
         site_post_id = post.get("id") or post.get("data-content") or f"page{page_number}-{offset + 1}"
+
+        if site_post_id in known_ids:
+            # Already stored — skip avatar/inline-image downloads and parsing.
+            continue
 
         author = post.get("data-author")
         name_tag = post.select_one(".message-name a") or post.select_one("a.username")
@@ -661,7 +838,7 @@ def parse_posts(html: str, page_url_str: str, page_number: int, start_post_numbe
             }
         )
 
-    return results
+    return results, len(posts)
 
 
 # --------------------------------------------------------------------------
@@ -669,11 +846,17 @@ def parse_posts(html: str, page_url_str: str, page_number: int, start_post_numbe
 # --------------------------------------------------------------------------
 
 def scrape_one_thread(thread_url: str, conn: sqlite3.Connection, session: requests.Session,
-                       image_cache: dict, assets_dir: str, delay: float, thread_pbar=None) -> bool:
+                       image_cache: dict, assets_dir: str, delay: float, thread_pbar=None,
+                       rebuild: bool = False) -> bool:
     """
     Scrape a single thread URL into the given (already-open) database connection.
     If thread_pbar is given (the outer, thread-level progress bar), its
     description is updated to show which thread is currently being scraped.
+
+    rebuild: when True (the --rescrape-all path), the thread's existing posts
+    are wiped first and everything is re-inserted from scratch, so upstream
+    edits and deletions are reflected. When False (the default), posts already
+    stored are left in place and only new ones are appended (INSERT OR IGNORE).
     """
     base_url = normalize_base_url(thread_url)
 
@@ -694,12 +877,30 @@ def scrape_one_thread(thread_url: str, conn: sqlite3.Connection, session: reques
         thread_pbar.set_description(f"Threads [{short_title}]")
 
     thread_id = upsert_thread(conn, base_url, title, last_page)
-    clear_existing_posts(conn, thread_id)
+    if rebuild:
+        # Full rebuild: drop the old posts so edits/deletions upstream are
+        # reflected, and re-fetch every page from the start.
+        clear_existing_posts(conn, thread_id)
+        known_ids = set()
+        start_page, next_post_number = 1, 1
+    else:
+        # Incremental: resume from the last page we already hold (new posts land
+        # at the end of a thread) and skip re-downloading images for posts we
+        # already have. Falls back to a page-1 start when the prior scrape didn't
+        # finish cleanly (see incremental_resume_point).
+        prior_status = conn.execute(
+            "SELECT last_scrape_status FROM threads WHERE id = ?", (thread_id,)
+        ).fetchone()[0]
+        start_page, next_post_number = incremental_resume_point(conn, thread_id, last_page, prior_status)
+        known_ids = existing_post_ids(conn, thread_id, min_page=start_page)
+        if start_page > 1:
+            log(f"  Resuming from page {start_page}/{last_page} ({next_post_number - 1} earlier post(s) already stored).")
 
-    next_post_number = 1
+    new_posts = 0
     any_page_failed = False
-    with tqdm(total=last_page, desc="  Pages", unit="page", position=1, leave=False, dynamic_ncols=True) as page_pbar:
-        for page_number in range(1, last_page + 1):
+    with tqdm(total=last_page - start_page + 1, desc="  Pages", unit="page", position=1, leave=False,
+              dynamic_ncols=True) as page_pbar:
+        for page_number in range(start_page, last_page + 1):
             url = page_url(base_url, page_number)
             if page_number == 1:
                 html = first_html
@@ -714,18 +915,20 @@ def scrape_one_thread(thread_url: str, conn: sqlite3.Connection, session: reques
                     continue
 
             log(f"  Parsing posts on page {page_number}...")
-            posts = parse_posts(html, url, page_number, next_post_number, session, assets_dir, image_cache)
-            save_posts(conn, thread_id, posts)
-            log(f"  Saved {len(posts)} post(s) from page {page_number}.")
-            next_post_number += len(posts)
+            posts, seen = parse_posts(html, url, page_number, next_post_number, session, assets_dir, image_cache, known_ids)
+            inserted = save_posts(conn, thread_id, posts)
+            new_posts += inserted
+            log(f"  Page {page_number}: {seen} post(s) seen, {inserted} new.")
+            next_post_number += seen
             page_pbar.update(1)
 
+    seen = next_post_number - 1
     if any_page_failed:
-        log(f"Done with {base_url}, but with 1+ pages skipped — {next_post_number - 1} post(s) saved. Marking for retry.\n")
+        log(f"Done with {base_url}, but with 1+ pages skipped — {new_posts} new post(s) saved ({seen} seen). Marking for retry.\n")
         mark_thread_error(conn, base_url, title=title)
         return False
 
-    log(f"Done with {base_url} — {next_post_number - 1} post(s) saved.\n")
+    log(f"Done with {base_url} — {new_posts} new post(s) saved ({seen} seen).\n")
     mark_thread_ok(conn, base_url)
     return True
 
@@ -781,8 +984,32 @@ def main():
     parser.add_argument(
         "--rescrape-all",
         action="store_true",
-        help="Only meaningful with --from-db: re-scrape every thread even if its last_scrape_status "
-        "is already 'ok' (by default, --from-db skips those threads).",
+        help="Force a full rebuild: each scraped thread's existing posts are wiped and re-inserted "
+        "from scratch, so upstream edits and deletions are reflected (the default instead appends only "
+        "new posts, leaving stored ones untouched). With --from-db this also re-scrapes threads whose "
+        "last_scrape_status is already 'ok' (normally skipped).",
+    )
+    parser.add_argument(
+        "--check-updates",
+        action="store_true",
+        help="Requires --from-db. Before scraping, find already-'ok' threads whose forum reply count "
+        "(the `replies` column) now exceeds the number of posts stored for them, mark those as 'stale', "
+        "then scrape exactly those. Re-run the forum indexer first so `replies` reflects current counts. "
+        "Only threads that GAINED posts are chased; upstream deletions are ignored. Closed/locked threads "
+        "are excluded by default — see --include-closed.",
+    )
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Only meaningful with --check-updates: do the check and mark grown threads 'stale', then "
+        "stop WITHOUT scraping them (review first, e.g. re-run later with a plain --from-db).",
+    )
+    parser.add_argument(
+        "--include-closed",
+        action="store_true",
+        help="Only meaningful with --check-updates: also check threads flagged closed/locked upstream "
+        "(the `is_closed` column). By default these are excluded, since a locked thread shouldn't gain "
+        "new posts and this avoids accidentally re-scraping tens of thousands of closed threads.",
     )
     parser.add_argument(
         "--poster",
@@ -836,6 +1063,13 @@ def main():
     if (args.poster or args.thread_ids) and not args.from_db:
         parser.error("--poster and --thread-id can only be used together with --from-db")
 
+    if args.check_updates and not args.from_db:
+        parser.error("--check-updates can only be used together with --from-db")
+    if args.check_only and not args.check_updates:
+        parser.error("--check-only can only be used together with --check-updates")
+    if args.include_closed and not args.check_updates:
+        parser.error("--include-closed can only be used together with --check-updates")
+
     start_time = time.perf_counter()
     log_file = args.log_file or default_log_file_path(args.db)
 
@@ -862,6 +1096,24 @@ def main():
         session = requests.Session()
         image_cache = {}
         conn = init_db(args.db)
+
+        # --check-updates: flip already-'ok' threads that gained posts to
+        # 'stale' first, so the normal --from-db pass below (which skips 'ok')
+        # then re-scrapes exactly those. Runs before the URL list is built so
+        # the freshly-staled threads are the ones that get loaded.
+        if args.check_updates:
+            try:
+                flagged = mark_threads_with_new_posts(conn, include_closed=args.include_closed)
+            except ValueError as exc:
+                sys.exit(str(exc))
+            closed_note = "" if args.include_closed else " (closed threads excluded)"
+            log(f"Update check: {flagged} already-scraped thread(s) have new posts and were marked for re-scrape{closed_note}.")
+            log_to_file(log_file, f"CHECK-UPDATES | flagged={flagged} | include_closed={args.include_closed}")
+            if args.check_only:
+                log("--check-only given; marked threads but not scraping. Re-run with --from-db to fetch them.")
+                conn.close()
+                conn = None
+                return
 
         # Decide skip-existing behavior first so already-'ok' threads can be
         # excluded before the list is even built/loaded, rather than being
@@ -917,7 +1169,9 @@ def main():
         made_previous_request = False
         scraping_started = True
         with tqdm(total=len(urls), desc="Threads", unit="thread", position=0, dynamic_ncols=True) as thread_pbar:
-            thread_pbar.set_postfix_str(checkpoint_postfix(succeeded, failed, skipped, args.backup_every, args.no_backup))
+            thread_pbar.set_postfix_str(
+                checkpoint_postfix(succeeded, failed, skipped, args.backup_every, args.no_backup, remaining=len(urls))
+            )
             for i, url in enumerate(urls, start=1):
                 base_url = normalize_base_url(url)
 
@@ -929,7 +1183,8 @@ def main():
                     log(f"[{i}/{len(urls)}] {url}")
                 try:
                     ok = scrape_one_thread(
-                        url, conn, session, image_cache, args.assets_dir, args.delay, thread_pbar=thread_pbar
+                        url, conn, session, image_cache, args.assets_dir, args.delay,
+                        thread_pbar=thread_pbar, rebuild=args.rescrape_all,
                     )
                 except Exception as exc:
                     log(f"  Unexpected error scraping {url}: {exc}")
@@ -953,7 +1208,9 @@ def main():
                 else:
                     failed += 1
                 thread_pbar.set_postfix_str(
-                    checkpoint_postfix(succeeded, failed, skipped, args.backup_every, args.no_backup)
+                    checkpoint_postfix(
+                        succeeded, failed, skipped, args.backup_every, args.no_backup, remaining=len(urls) - i
+                    )
                 )
 
         if not args.no_backup:

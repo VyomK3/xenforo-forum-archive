@@ -1,0 +1,11 @@
+# Dry run (default) — just reports what it found, deletes nothing
+python dedupe_posts.py --db forum_index.db
+
+# Write every duplicate row (marked KEEP/DELETE) to a CSV for manual review first
+python dedupe_posts.py --db forum_index.db --report-csv duplicates.csv
+
+# Actually remove them (takes an automatic safety backup first)
+python dedupe_posts.py --db forum_index.db --apply
+
+# Keep the newest copy of each duplicate instead of the oldest
+python dedupe_posts.py --db forum_index.db --apply --keep-latest

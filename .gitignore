@@ -29,3 +29,5 @@ desktop.ini
 # ── Secrets
 .env
 *.pem
+
+Notes.txt
